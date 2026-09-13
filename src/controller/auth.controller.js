@@ -53,7 +53,7 @@ export const userLoginController = async (req, res) => {
     try {
         // getting email and password from request body
         const { email, password } = req.body;
-        const user = await userModel.findOne({ email: email }).select("+password");
+        const user = await userModel.findOne({ email: email }).select();
 
         // checking if user exists
         if (!user) {
