@@ -1,9 +1,6 @@
 import express from "express"
-import authRouter from "./routes/auth.routes.js"
 import cookieParser from "cookie-parser"
-import accountRouter from "./routes/account.routes.js"
-import transactionRouter from "./routes/transcation.routes.js"
-
+import api from "./routes/index.js"
 
 const app = express()
 
@@ -21,9 +18,11 @@ app.use((req, res, next) => {
 });
 
 // routes handling
-app.use("/api/auth", authRouter);
-app.use("/api/accounts", accountRouter);
-app.use("/api/transactions", transactionRouter);
+app.use("/api", api);
+app.use((err, req, res, next) => {
+  const status = err.statusCode || 500;
+  res.status(status).json({ message: err.message, status: "failed" });
+});
 
 
 

@@ -1,8 +1,8 @@
-import router from "express";
+import { Router } from "express";
 import authMiddleware from "../middleware/auth.middleware";
 import { createTransaction } from "../controller/transcation.controller";
 
-const transactionRouter = router();
+const transactionRouter = Router();
 // middleware pre handle
 transactionRouter.use(authMiddleware);
 

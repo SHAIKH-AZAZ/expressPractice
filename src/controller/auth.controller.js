@@ -1,6 +1,8 @@
 import userModel from "../models/user.models.js";
 import jwt from "jsonwebtoken";
 import { sendRegistrationEmail } from "../services/email.service.js";
+import { asyncHandler } from "../utils/asyncHandler.js";
+import { ApiError } from "../utils/ApiError.js";
 
 /**
  * POST /register
@@ -9,40 +11,37 @@ import { sendRegistrationEmail } from "../services/email.service.js";
  * @param {Object} res - The response object
  * @returns {Object} - The response object
  */
-export const userRegisterController = async (req, res) => {
+export const userRegisterController = asyncHandler(async (req, res) => {
+    const { email, password, name } = req.body;
+    const isExists = await userModel.findOne({ email: email });
+    if (isExists) {
+        throw new ApiError(400, "User already exists");
+    }
+    const user = await userModel.create({ email, password, name });
+
+    const token = jwt.sign({ userId: user._id }, process.env.JWT_SECRET, {
+        expiresIn: "1d",
+    });
+    res.cookie("token", token);
+
+    res.status(201).json({
+        user: {
+            _id: user._id,
+            email: user.email,
+            name: name,
+        },
+        status: "success",
+        token,
+    });
+
+    // Registration already succeeded and the response is sent - an email
+    // failure here must not surface as a request error.
     try {
-        const { email, password, name } = req.body;
-        const isExists = await userModel.findOne({ email: email });
-        if (isExists) {
-            return res.status(400).json({
-                message: "User already exists",
-                status: "failed",
-            });
-        }
-        const user = await userModel.create({ email, password, name });
-
-        const token = jwt.sign({ userId: user._id }, process.env.JWT_SECRET, {
-            expiresIn: "1d",
-        });
-        res.cookie("token", token);
-
-        res.status(201).json({
-            user: {
-                _id: user._id,
-                email: user.email,
-                name: name,
-            },
-            status: "success",
-            token,
-        });
         await sendRegistrationEmail(user.email, user.name);
     } catch (error) {
-        return res.status(500).json({
-            message: error.message,
-            status: "failed",
-        });
+        console.error(`Failed to send registration email for ${user._id}:`, error);
     }
-};
+});
 
 /**
  * POST api/auth/login
@@ -51,46 +50,33 @@ export const userRegisterController = async (req, res) => {
  * @param {Object} res - The response object
  * @returns {Object} - The response object
  */
-export const userLoginController = async (req, res) => {
-    try {
-        // getting email and password from request body
-        const { email, password } = req.body;
-        const user = await userModel.findOne({ email: email }).select("password");
+export const userLoginController = asyncHandler(async (req, res) => {
+    // getting email and password from request body
+    const { email, password } = req.body;
+    const user = await userModel.findOne({ email: email }).select("password");
 
-        // checking if user exists
-        if (!user) {
-            return res.status(401).json({
-                message: "User not found",
-                status: "failed",
-            });
-        }
-        // checking password
-        const isValidPassword = await user.comparePassword(password);
-        if (!isValidPassword) {
-            return res.status(401).json({
-                message: "Invalid Credentials",
-                status: "failed",
-            });
-        }
-
-        // token generation
-        const token = jwt.sign({ userId: user._id }, process.env.JWT_SECRET, {
-            expiresIn: "1h",
-        });
-        res.cookie("token", token);
-        return res.status(200).json({
-            user: {
-                _id: user._id,
-                email: user.email,
-                name: user.name,
-            },
-            status: "success",
-            token,
-        });
-    } catch (error) {
-        return res.status(500).json({
-            message: error.message,
-            status: "failed",
-        });
+    // checking if user exists
+    if (!user) {
+        throw new ApiError(401, "User not found");
     }
-};
+    // checking password
+    const isValidPassword = await user.comparePassword(password);
+    if (!isValidPassword) {
+        throw new ApiError(401, "Invalid Credentials");
+    }
+
+    // token generation
+    const token = jwt.sign({ userId: user._id }, process.env.JWT_SECRET, {
+        expiresIn: "1h",
+    });
+    res.cookie("token", token);
+    return res.status(200).json({
+        user: {
+            _id: user._id,
+            email: user.email,
+            name: user.name,
+        },
+        status: "success",
+        token,
+    });
+});

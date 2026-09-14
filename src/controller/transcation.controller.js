@@ -1,9 +1,11 @@
 import mongoose from "mongoose";
-import transactionsModel from "../models/transactions.model";
-import accountModel from "../models/account.model";
-import ledgerModel from "../models/ledger.model";
-import userModel from "../models/user.models";
-import { sendTransactionEmail } from "../services/email.service";
+import transactionsModel from "../models/transactions.model.js";
+import accountModel from "../models/account.model.js";
+import ledgerModel from "../models/ledger.model.js";
+import userModel from "../models/user.models.js";
+import { sendTransactionEmail } from "../services/email.service.js";
+import { asyncHandler } from "../utils/asyncHandler.js";
+import { ApiError } from "../utils/ApiError.js";
 
 // Maps an existing-transaction status to an early HTTP response.
 const IDEMPOTENT_RESPONSES = {
@@ -29,15 +31,13 @@ const IDEMPOTENT_RESPONSES = {
  */
 
 
-export const createTransaction = async (req, res) => {
+export const createTransaction = asyncHandler(async (req, res) => {
 
     const { fromAccount, toAccount, amount, idempotencyKey } = req.body;
 
     // 1.Validate request
     if(!fromAccount || !toAccount || !amount || !idempotencyKey) {
-        return res.status(400).json({
-            message: 'fromAccount, toAccount, amount, and idempotencyKey are required'
-        });
+        throw new ApiError(400, 'fromAccount, toAccount, amount, and idempotencyKey are required');
     }
 
     const [sender, receiver] = await Promise.all([
@@ -46,9 +46,7 @@ export const createTransaction = async (req, res) => {
     ]);
 
     if(!sender || !receiver) {
-        return res.status(400).json({
-            message: 'fromAccount and toAccount must be valid account IDs'
-        });
+        throw new ApiError(400, 'fromAccount and toAccount must be valid account IDs');
     }
 
     // 2. idempotency
@@ -59,32 +57,24 @@ export const createTransaction = async (req, res) => {
     if(existing) {
         const reply = IDEMPOTENT_RESPONSES[existing.status]
             ?? { code: 500 , message: "Transaction status is unknown"}
-        return res.status(reply.code).json({
-            message: reply.message,
-        });
+        throw new ApiError(reply.code, reply.message);
     }
 
     // 3. Account status
     if (sender.status !== "ACTIVE" || receiver.status !== "ACTIVE") {
-        return res.status(400)
-            .json({
-                message: 'Account status must be ACTIVE'
-            });
+        throw new ApiError(400, 'Account status must be ACTIVE');
     }
 
     // 4. balance check
     const balance = await sender.getBalance();
     if (balance < amount) {
-        return res.status(400)
-            .json({
-                message: `Insufficient balance: ${balance} is less than ${amount}`
-            });
+        throw new ApiError(400, `Insufficient balance: ${balance} is less than ${amount}`);
     }
 
     // 5-9 Atomic transaction
     const session = await mongoose.startSession();
+    let transaction;
     try {
-        let transaction;
         await session.withTransaction(async () => {
             [transaction] = await transactionsModel.create(
                 [{ fromAccount, toAccount, amount, idempotencyKey, status: "PENDING" }],
@@ -104,9 +94,13 @@ export const createTransaction = async (req, res) => {
             transaction.status = "COMPLETED";
             await transaction.save({ session });
         })
+    } finally {
+        session.endSession();
+    }
 
-        // Notify sender (via WebSocket or email) outside the DB transaction - email failure must not backed money
-
+    // Notify sender outside the DB transaction - the money already moved,
+    // so an email failure here must not turn a successful transfer into an error response.
+    try {
         const owner = await userModel.findById(sender.user);
         if(owner) {
             await sendTransactionEmail(owner.email, owner.name, {
@@ -118,13 +112,12 @@ export const createTransaction = async (req, res) => {
                     date: transaction.updatedAt,
                 });
         }
-        return res.status(201).json({
-            message: `Transaction completed successfully`,
-            transaction
-        })
     } catch (error) {
-        return res.status(500).json({ message: error.message, status: "failed" });
-    } finally {
-        session.endSession();
+        console.error(`Failed to send transaction email for ${transaction._id}:`, error);
     }
-}
+
+    return res.status(201).json({
+        message: `Transaction completed successfully`,
+        transaction
+    })
+})
