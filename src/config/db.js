@@ -5,7 +5,7 @@ configDotenv()
 const connectDB = () => {
   mongoose.connect(process.env.MONGODB_URI)
     .then(() => {
-      console.log(`Server is connection to DB`)
+      console.log(`Server is connected  to DB`)
 
     })
     .catch(err => {

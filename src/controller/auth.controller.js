@@ -1,5 +1,6 @@
 import userModel from "../models/user.models.js";
 import jwt from "jsonwebtoken";
+import { sendRegistrationEmail } from "../services/email.service.js";
 
 /**
  * POST /register
@@ -25,7 +26,7 @@ export const userRegisterController = async (req, res) => {
         });
         res.cookie("token", token);
 
-        return res.status(201).json({
+        res.status(201).json({
             user: {
                 _id: user._id,
                 email: user.email,
@@ -34,6 +35,7 @@ export const userRegisterController = async (req, res) => {
             status: "success",
             token,
         });
+        await sendRegistrationEmail(user.email, user.name);
     } catch (error) {
         return res.status(500).json({
             message: error.message,
@@ -53,7 +55,7 @@ export const userLoginController = async (req, res) => {
     try {
         // getting email and password from request body
         const { email, password } = req.body;
-        const user = await userModel.findOne({ email: email }).select();
+        const user = await userModel.findOne({ email: email }).select("password");
 
         // checking if user exists
         if (!user) {
